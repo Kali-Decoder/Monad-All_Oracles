@@ -7,7 +7,6 @@ async function deployChronicleOracle() {
   await chronicle.waitForDeployment();
   console.log("Deployed chronicle Contract Address:", await chronicle.getAddress());
 }
-
 async function main() {
   await deployChronicleOracle();
 }
