@@ -13,6 +13,8 @@ async function getValue() {
     ChronicleAddress,
     sender
   );
+
+  // 86493601898298108975910
   const value = await chronicleContract.read(CHOICE);
   console.log("Read Value From Chronicle:", value);
 }
