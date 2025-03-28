@@ -15,7 +15,7 @@ async function getValue() {
   );
   const latestRoundData = await redStoneContract.latestRoundData();
   const price = ethers.formatUnits(latestRoundData.answer, 8);
-  console.log("Value in 18 Decimals :", price);
+  console.log("Value in 8 Decimals :", price);
 }
 
 async function main() {
