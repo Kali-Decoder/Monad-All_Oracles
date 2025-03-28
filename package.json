@@ -7,6 +7,7 @@
   "dependencies": {
     "@pythnetwork/pyth-sdk-solidity": "^4.0.0",
     "@redstone-finance/evm-connector": "^0.8.0",
+    "@switchboard-xyz/on-demand": "^2.4.0",
     "@switchboard-xyz/on-demand-solidity": "^0.0.4",
     "dotenv": "^16.4.7"
   }

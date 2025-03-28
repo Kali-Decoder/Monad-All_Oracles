@@ -3,7 +3,7 @@ pragma solidity ^0.8.17;
 import {ISwitchboard} from "@switchboard-xyz/on-demand-solidity/ISwitchboard.sol";
 import {Structs} from "@switchboard-xyz/on-demand-solidity/structs/Structs.sol";
 
-contract OracleReader {
+contract SwitchboardOracleReader {
   ISwitchboard switchboard;
 
   // Every Switchboard feed has a unique aggregator id
@@ -26,8 +26,6 @@ contract OracleReader {
    * @param _aggregatorId The feed ID for the feed you want to query
    */
   constructor(address _switchboard, bytes32 _aggregatorId) {
-    // Initialize the target _switchboard
-    // Get the existing Switchboard contract address on your preferred network from the Switchboard Docs
     switchboard = ISwitchboard(_switchboard);
     aggregatorId = _aggregatorId;
   }
