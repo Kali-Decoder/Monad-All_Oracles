@@ -3,7 +3,6 @@ import { ethers } from 'ethers';
 import * as dotenv from "dotenv";
 import * as fs from 'fs';
 import * as path from 'path';
-
 dotenv.config();
 
 // ============================================================================
@@ -65,6 +64,34 @@ const NETWORKS: Record<string, NetworkConfig> = {
 };
 
 // ============================================================================
+// FEED CONFIGURATION
+// ============================================================================
+
+interface FeedConfig {
+    name: string;
+    hash: string;
+}
+
+const FEEDS: FeedConfig[] = [
+    {
+        name: 'BTC/USD',
+        hash: '0x4cd1cad962425681af07b9254b7d804de3ca3446fbfd1371bb258d2c75059812'
+    },
+    {
+        name: 'ETH/USD',
+        hash: '0xa0950ee5ee117b2e2c30f154a69e17bfb489a7610c508dc5f67eb2a14616d8ea'
+    },
+    {
+        name: 'SOL/USD',
+        hash: '0x822512ee9add93518eca1c105a38422841a76c590db079eebb283deb2c14caa9'
+    },
+    {
+        name: 'SUI/USD',
+        hash: '0x7ceef94f404e660925ea4b33353ff303effaf901f224bdee50df3a714c1299e9'
+    }
+];
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
@@ -72,7 +99,7 @@ const config = {
     rpcUrl: process.env.RPC_URL || 'https://testnet-rpc.monad.xyz',
     privateKey: process.env.PRIVATE_KEY || '',
     network: (process.env.NETWORK || 'monad-testnet') as keyof typeof NETWORKS,
-    feedHash: process.env.FEED_HASH || "0x4cd1cad962425681af07b9254b7d804de3ca3446fbfd1371bb258d2c75059812", // BTC/USD
+    feeds: FEEDS, // Use all feeds by default
     maxPriceAge: parseInt(process.env.MAX_PRICE_AGE || '300'), // 5 minutes
     maxDeviationBps: parseInt(process.env.MAX_DEVIATION_BPS || '1000'), // 10%
 };
@@ -104,25 +131,37 @@ const PRICE_CONSUMER_ABI = [
 // FETCH FEED DATA FROM SWITCHBOARD CROSSBAR
 // ============================================================================
 
-async function fetchFeedData(feedHash: string) {
+interface FeedData {
+    name: string;
+    feedHash: string;
+    value: string;
+    timestamp: number;
+    slot: number;
+    numOracles: number;
+    encoded: string;
+}
+
+async function fetchFeedData(feeds: FeedConfig[]): Promise<FeedData[]> {
     console.log('\n' + '='.repeat(60));
     console.log('📡 STEP 1: Fetching Feed Data from Switchboard Crossbar');
     console.log('='.repeat(60));
     
-    const normalizedFeedHash = normalizeFeedHash(feedHash);
-    const feedHashForCrossbar = normalizedFeedHash.startsWith('0x')
-        ? normalizedFeedHash.slice(2)
-        : normalizedFeedHash;
-
-    console.log(`\n🔍 Feed Hash: ${normalizedFeedHash}`);
+    console.log(`\n🔍 Fetching ${feeds.length} feed(s)...`);
     console.log(`📡 Connecting to Switchboard Crossbar API...`);
 
     try {
         const crossbar = new CrossbarClient('https://crossbar.switchboard.xyz');
-        console.log(`⏳ Fetching oracle quote for feed...`);
+        
+        // Prepare feed hashes for Crossbar (without 0x prefix)
+        const feedHashesForCrossbar = feeds.map(feed => {
+            const normalized = normalizeFeedHash(feed.hash);
+            return normalized.startsWith('0x') ? normalized.slice(2) : normalized;
+        });
+
+        console.log(`⏳ Fetching oracle quotes for ${feeds.length} feed(s)...`);
         
         const response = await crossbar.fetchOracleQuote(
-            [feedHashForCrossbar],
+            feedHashesForCrossbar,
             'mainnet'
         );
 
@@ -130,26 +169,46 @@ async function fetchFeedData(feedHash: string) {
             throw new Error('No encoded data in response');
         }
 
-        const medianResponse = response.medianResponses?.[0];
-        if (!medianResponse) {
-            throw new Error('No median response in data');
+        if (!response.medianResponses || response.medianResponses.length !== feeds.length) {
+            throw new Error(`Expected ${feeds.length} median responses, got ${response.medianResponses?.length || 0}`);
         }
 
-        console.log('\n✅ Feed Data Retrieved Successfully:');
-        console.log(`   📊 Value: ${formatValue(BigInt(medianResponse.value))}`);
-        console.log(`   🕐 Timestamp: ${new Date(response.timestamp * 1000).toISOString()}`);
-        console.log(`   🔢 Slot Number: ${response.slot}`);
-        console.log(`   👥 Number of Oracles: ${response.oracleResponses.length}`);
-        console.log(`   📦 Encoded Data Length: ${response.encoded.length} bytes`);
+        const feedDataArray: FeedData[] = [];
 
-        return {
-            feedHash: normalizedFeedHash,
-            value: medianResponse.value,
-            timestamp: response.timestamp,
-            slot: response.slot,
-            numOracles: response.oracleResponses.length,
-            encoded: response.encoded,
-        };
+        console.log('\n✅ Feed Data Retrieved Successfully:');
+        console.log('-'.repeat(60));
+
+        for (let i = 0; i < feeds.length; i++) {
+            const feed = feeds[i];
+            const medianResponse = response.medianResponses[i];
+            const normalizedFeedHash = normalizeFeedHash(feed.hash);
+
+            if (!medianResponse) {
+                throw new Error(`No median response for feed ${feed.name} (${normalizedFeedHash})`);
+            }
+
+            console.log(`\n   📊 ${feed.name}:`);
+            console.log(`      Feed Hash: ${normalizedFeedHash}`);
+            console.log(`      Value: ${formatValue(BigInt(medianResponse.value))}`);
+            console.log(`      Timestamp: ${new Date(response.timestamp * 1000).toISOString()}`);
+            console.log(`      Slot Number: ${response.slot}`);
+            console.log(`      Oracles: ${response.oracleResponses.length}`);
+
+            feedDataArray.push({
+                name: feed.name,
+                feedHash: normalizedFeedHash,
+                value: medianResponse.value,
+                timestamp: response.timestamp,
+                slot: response.slot,
+                numOracles: response.oracleResponses.length,
+                encoded: response.encoded, // All feeds share the same encoded data
+            });
+        }
+
+        console.log(`\n   📦 Encoded Data Length: ${response.encoded.length} bytes`);
+        console.log(`   ✅ Successfully fetched ${feedDataArray.length} feed(s)`);
+
+        return feedDataArray;
     } catch (error: any) {
         console.error('\n❌ Error fetching feed data:');
         console.error(`   ${error.message}`);
@@ -185,7 +244,10 @@ async function updatePrices() {
         throw new Error(`❌ Unknown network: ${config.network}`);
     }
     console.log(`✅ Network: ${networkConfig.name} (Chain ID: ${networkConfig.chainId})`);
-    console.log(`✅ Feed Hash: ${config.feedHash}`);
+    console.log(`✅ Feeds to update: ${config.feeds.length}`);
+    config.feeds.forEach((feed, index) => {
+        console.log(`   ${index + 1}. ${feed.name}: ${feed.hash}`);
+    });
 
     // Step 2: Load Deployments
     console.log('\n📋 STEP 2: Loading Contract Addresses');
@@ -231,7 +293,7 @@ async function updatePrices() {
     console.log(`✅ Account balance: ${ethers.formatEther(balance)} ETH`);
 
     // Step 4: Fetch Feed Data
-    const feedData = await fetchFeedData(config.feedHash);
+    const feedDataArray = await fetchFeedData(config.feeds);
 
     // Step 5: Get Required Fee
     console.log('\n📋 STEP 4: Calculating Required Fee');
@@ -243,8 +305,11 @@ async function updatePrices() {
         signer
     );
     
-    console.log(`⏳ Querying switchboard for update fee...`);
-    const fee = await switchboard.getFee([feedData.encoded]);
+    // All feeds share the same encoded data from Crossbar
+    const encodedUpdates = [feedDataArray[0].encoded];
+    
+    console.log(`⏳ Querying switchboard for update fee for ${feedDataArray.length} feed(s)...`);
+    const fee = await switchboard.getFee(encodedUpdates);
     console.log(`✅ Required fee: ${ethers.formatEther(fee)} ETH (${fee.toString()} wei)`);
     
     if (balance < fee) {
@@ -261,16 +326,21 @@ async function updatePrices() {
         signer
     );
     
-    const feedIdForUpdate = normalizeFeedHash(config.feedHash);
+    // Prepare feed IDs for the transaction
+    const feedIds = feedDataArray.map(feed => feed.feedHash);
+    
     console.log(`📝 Preparing transaction...`);
     console.log(`   Contract: ${priceConsumerAddress}`);
-    console.log(`   Feed ID: ${feedIdForUpdate}`);
+    console.log(`   Feeds to update: ${feedDataArray.length}`);
+    feedDataArray.forEach((feed, index) => {
+        console.log(`   ${index + 1}. ${feed.name}: ${feed.feedHash}`);
+    });
     console.log(`   Value: ${ethers.formatEther(fee)} ETH`);
     
     console.log(`\n⏳ Sending transaction...`);
     const tx = await priceConsumer.updatePrices(
-        [feedData.encoded],
-        [feedIdForUpdate],
+        encodedUpdates,
+        feedIds,
         { value: fee }
     );
     
@@ -288,29 +358,39 @@ async function updatePrices() {
     console.log(`   Status: ${receipt.status === 1 ? '✅ Success' : '❌ Failed'}`);
     console.log(`   Explorer: ${networkConfig.explorer}/tx/${receipt.hash}`);
 
-    // Step 7: Verify Price Update
-    console.log('\n📋 STEP 6: Verifying Price Update');
+    // Step 7: Verify Price Updates
+    console.log('\n📋 STEP 6: Verifying Price Updates');
     console.log('-'.repeat(60));
     
-    const feedId = normalizeFeedHash(config.feedHash);
-    console.log(`⏳ Querying on-chain price data for feed: ${feedId}...`);
+    console.log(`⏳ Querying on-chain price data for ${feedDataArray.length} feed(s)...`);
     
-    const [value, timestamp, slotNumber] = await priceConsumer.getPrice(feedId);
-    const isFresh = await priceConsumer.isPriceFresh(feedId);
-    const age = await priceConsumer.getPriceAge(feedId);
     const maxPriceAge = await priceConsumer.maxPriceAge();
     const maxDeviationBps = await priceConsumer.maxDeviationBps();
 
     console.log('\n📊 On-Chain Price Data:');
     console.log('-'.repeat(60));
-    console.log(`   Feed ID: ${feedId}`);
-    console.log(`   Value: ${formatValue(value)}`);
-    console.log(`   Timestamp: ${new Date(Number(timestamp) * 1000).toISOString()}`);
-    console.log(`   Slot Number: ${slotNumber.toString()}`);
-    console.log(`   Price Age: ${age.toString()} seconds`);
-    console.log(`   Max Price Age: ${maxPriceAge.toString()} seconds`);
-    console.log(`   Is Fresh: ${isFresh ? '✅ Yes' : '❌ No'}`);
-    console.log(`   Max Deviation: ${maxDeviationBps.toString()} bps (${Number(maxDeviationBps) / 100}%)`);
+
+    for (const feedData of feedDataArray) {
+        const feedId = feedData.feedHash;
+        console.log(`\n   📊 ${feedData.name}:`);
+        
+        try {
+            const [value, timestamp, slotNumber] = await priceConsumer.getPrice(feedId);
+            const isFresh = await priceConsumer.isPriceFresh(feedId);
+            const age = await priceConsumer.getPriceAge(feedId);
+
+            console.log(`      Feed ID: ${feedId}`);
+            console.log(`      Value: ${formatValue(value)}`);
+            console.log(`      Timestamp: ${new Date(Number(timestamp) * 1000).toISOString()}`);
+            console.log(`      Slot Number: ${slotNumber.toString()}`);
+            console.log(`      Price Age: ${age.toString()} seconds`);
+            console.log(`      Max Price Age: ${maxPriceAge.toString()} seconds`);
+            console.log(`      Is Fresh: ${isFresh ? '✅ Yes' : '❌ No'}`);
+            console.log(`      Max Deviation: ${maxDeviationBps.toString()} bps (${Number(maxDeviationBps) / 100}%)`);
+        } catch (error: any) {
+            console.log(`      ❌ Error reading price: ${error.message}`);
+        }
+    }
 
     console.log('\n' + '='.repeat(60));
     console.log('✅ Price Update Complete!');
